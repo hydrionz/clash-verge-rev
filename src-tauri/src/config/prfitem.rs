@@ -175,12 +175,12 @@ impl PrfItem {
         let mut groups = opt_ref.and_then(|o| o.groups.clone());
 
         if merge.is_none() {
-            let merge_item = PrfItem::from_merge()?;
+            let merge_item = PrfItem::from_merge(None)?;
             Config::profiles().data().append_item(merge_item.clone())?;
             merge = merge_item.uid;
         }
         if script.is_none() {
-            let script_item = PrfItem::from_script()?;
+            let script_item = PrfItem::from_script(None)?;
             Config::profiles().data().append_item(script_item.clone())?;
             script = script_item.uid;
         }
@@ -247,33 +247,6 @@ impl PrfItem {
         let mut groups = opt_ref.and_then(|o| o.groups.clone());
         let mut builder = reqwest::ClientBuilder::new().use_rustls_tls().no_proxy();
 
-        if merge.is_none() {
-            let merge_item = PrfItem::from_merge()?;
-            Config::profiles().data().append_item(merge_item.clone())?;
-            merge = merge_item.uid;
-        }
-        if script.is_none() {
-            let script_item = PrfItem::from_script()?;
-            Config::profiles().data().append_item(script_item.clone())?;
-            script = script_item.uid;
-        }
-        if rules.is_none() {
-            let rules_item = PrfItem::from_rules()?;
-            Config::profiles().data().append_item(rules_item.clone())?;
-            rules = rules_item.uid;
-        }
-        if proxies.is_none() {
-            let proxies_item = PrfItem::from_proxies()?;
-            Config::profiles()
-                .data()
-                .append_item(proxies_item.clone())?;
-            proxies = proxies_item.uid;
-        }
-        if groups.is_none() {
-            let groups_item = PrfItem::from_groups()?;
-            Config::profiles().data().append_item(groups_item.clone())?;
-            groups = groups_item.uid;
-        }
         // 使用软件自己的代理
         if self_proxy {
             let port = Config::verge()
@@ -400,6 +373,34 @@ impl PrfItem {
             bail!("profile does not contain `proxies` or `proxy-providers`");
         }
 
+        if merge.is_none() {
+            let merge_item = PrfItem::from_merge(None)?;
+            Config::profiles().data().append_item(merge_item.clone())?;
+            merge = merge_item.uid;
+        }
+        if script.is_none() {
+            let script_item = PrfItem::from_script(None)?;
+            Config::profiles().data().append_item(script_item.clone())?;
+            script = script_item.uid;
+        }
+        if rules.is_none() {
+            let rules_item = PrfItem::from_rules()?;
+            Config::profiles().data().append_item(rules_item.clone())?;
+            rules = rules_item.uid;
+        }
+        if proxies.is_none() {
+            let proxies_item = PrfItem::from_proxies()?;
+            Config::profiles()
+                .data()
+                .append_item(proxies_item.clone())?;
+            proxies = proxies_item.uid;
+        }
+        if groups.is_none() {
+            let groups_item = PrfItem::from_groups()?;
+            Config::profiles().data().append_item(groups_item.clone())?;
+            groups = groups_item.uid;
+        }
+
         Ok(PrfItem {
             uid: Some(uid),
             itype: Some("remote".into()),
@@ -426,12 +427,17 @@ impl PrfItem {
 
     /// ## Merge type (enhance)
     /// create the enhanced item by using `merge` rule
-    pub fn from_merge() -> Result<PrfItem> {
-        let uid = help::get_uid("m");
-        let file = format!("{uid}.yaml");
+    pub fn from_merge(uid: Option<String>) -> Result<PrfItem> {
+        let mut id = help::get_uid("m");
+        let mut template = tmpl::ITEM_MERGE_EMPTY.into();
+        if let Some(uid) = uid {
+            id = uid;
+            template = tmpl::ITEM_MERGE.into();
+        }
+        let file = format!("{id}.yaml");
 
         Ok(PrfItem {
-            uid: Some(uid),
+            uid: Some(id),
             itype: Some("merge".into()),
             name: None,
             desc: None,
@@ -442,18 +448,21 @@ impl PrfItem {
             option: None,
             home: None,
             updated: Some(chrono::Local::now().timestamp() as usize),
-            file_data: Some(tmpl::ITEM_MERGE.into()),
+            file_data: Some(template),
         })
     }
 
     /// ## Script type (enhance)
     /// create the enhanced item by using javascript quick.js
-    pub fn from_script() -> Result<PrfItem> {
-        let uid = help::get_uid("s");
-        let file = format!("{uid}.js"); // js ext
+    pub fn from_script(uid: Option<String>) -> Result<PrfItem> {
+        let mut id = help::get_uid("s");
+        if let Some(uid) = uid {
+            id = uid;
+        }
+        let file = format!("{id}.js"); // js ext
 
         Ok(PrfItem {
-            uid: Some(uid),
+            uid: Some(id),
             itype: Some("script".into()),
             name: None,
             desc: None,

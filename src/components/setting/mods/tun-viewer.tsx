@@ -144,8 +144,8 @@ export const TunViewer = forwardRef<DialogRef>((props, ref) => {
         <ListItem sx={{ padding: "5px 2px" }}>
           <ListItemText primary={t("Device")} />
           <TextField
+            autoComplete="new-password"
             size="small"
-            autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck="false"
@@ -190,8 +190,8 @@ export const TunViewer = forwardRef<DialogRef>((props, ref) => {
         <ListItem sx={{ padding: "5px 2px" }}>
           <ListItemText primary={t("DNS Hijack")} />
           <TextField
+            autoComplete="new-password"
             size="small"
-            autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck="false"
@@ -207,9 +207,9 @@ export const TunViewer = forwardRef<DialogRef>((props, ref) => {
         <ListItem sx={{ padding: "5px 2px" }}>
           <ListItemText primary={t("MTU")} />
           <TextField
+            autoComplete="new-password"
             size="small"
             type="number"
-            autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck="false"

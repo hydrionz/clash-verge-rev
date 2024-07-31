@@ -41,6 +41,7 @@ import {
   ProfileViewer,
   ProfileViewerRef,
 } from "@/components/profile/profile-viewer";
+import { ProfileMore } from "@/components/profile/profile-more";
 import { ProfileItem } from "@/components/profile/profile-item";
 import { useProfiles } from "@/hooks/use-profiles";
 import { ConfigViewer } from "@/components/setting/mods/config-viewer";
@@ -170,10 +171,11 @@ const ProfilePage = () => {
     }, 100);
     try {
       await patchProfiles({ current });
-      mutateLogs();
+      await mutateLogs();
       closeAllConnections();
-      setTimeout(() => activateSelected(), 2000);
-      Notice.success(t("Profile Switched"), 1000);
+      activateSelected().then(() => {
+        Notice.success(t("Profile Switched"), 1000);
+      });
     } catch (err: any) {
       Notice.error(err?.message || err.toString(), 4000);
     } finally {
@@ -243,6 +245,12 @@ const ProfilePage = () => {
     const text = await readText();
     if (text) setUrl(text);
   };
+
+  const mode = useThemeMode();
+  const islight = mode === "light" ? true : false;
+  const dividercolor = islight
+    ? "rgba(0, 0, 0, 0.06)"
+    : "rgba(255, 255, 255, 0.06)";
 
   return (
     <BasePage
@@ -370,7 +378,7 @@ const ProfilePage = () => {
                       itemData={item}
                       onSelect={(f) => onSelect(item.uid, f)}
                       onEdit={() => viewerRef.current?.edit(item)}
-                      onChange={async (prev, curr) => {
+                      onSave={async (prev, curr) => {
                         if (prev !== curr && profiles.current === item.uid) {
                           await onEnhance();
                         }
@@ -383,7 +391,38 @@ const ProfilePage = () => {
             </Grid>
           </Box>
         </DndContext>
+        <Divider
+          variant="middle"
+          flexItem
+          sx={{ width: `calc(100% - 32px)`, borderColor: dividercolor }}
+        ></Divider>
+        <Box sx={{ mt: 1.5 }}>
+          <Grid container spacing={{ xs: 1, lg: 1 }}>
+            <Grid item xs={12} sm={6} md={6} lg={6}>
+              <ProfileMore
+                id="Merge"
+                onSave={async (prev, curr) => {
+                  if (prev !== curr) {
+                    await onEnhance();
+                  }
+                }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={6} lg={6}>
+              <ProfileMore
+                id="Script"
+                logInfo={chainLogs["Script"]}
+                onSave={async (prev, curr) => {
+                  if (prev !== curr) {
+                    await onEnhance();
+                  }
+                }}
+              />
+            </Grid>
+          </Grid>
+        </Box>
       </Box>
+
       <ProfileViewer ref={viewerRef} onChange={() => mutateProfiles()} />
       <ConfigViewer ref={configRef} />
     </BasePage>

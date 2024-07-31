@@ -20,17 +20,17 @@ export const ConfigViewer = forwardRef<DialogRef>((_, ref) => {
     close: () => setOpen(false),
   }));
 
+  if (!open) return null;
   return (
     <EditorViewer
+      open={true}
       title={
-        <Box>
+        <Box display="flex" alignItems="center" gap={2}>
           {t("Runtime Config")}
           <Chip label={t("ReadOnly")} size="small" />
         </Box>
       }
-      mode="text"
-      property={runtimeConfig}
-      open={open}
+      initialData={Promise.resolve(runtimeConfig)}
       readOnly
       language="yaml"
       schema="clash"

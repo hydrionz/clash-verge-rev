@@ -1,123 +1,139 @@
-use tauri::Emitter;
-
 use super::CmdResult;
 use crate::{
-    cache::CacheProxy,
-    core::{handle::Handle, tray::Tray},
-    ipc::IpcManager,
-    logging,
-    utils::logging::Type,
+    cmd::StringifyErr as _,
+    config::Config,
+    core::{
+        handle::Handle,
+        proxy_view::{ProxyViewBuilder, ProxyViewInput, ProxyViewV1},
+        tray::Tray,
+    },
+    process::AsyncHandler,
 };
-use std::time::Duration;
+use clash_verge_logging::{Type, logging};
+use serde_yaml_ng::Mapping;
+use std::{
+    collections::HashSet,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
-const PROXIES_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
-const PROVIDERS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
-
+/// Merges one selection pair into fresh backend state to avoid stale-list overwrites.
 #[tauri::command]
-pub async fn get_proxies() -> CmdResult<serde_json::Value> {
-    let cache = CacheProxy::global();
-    let key = CacheProxy::make_key("proxies", "default");
-    let value = cache
-        .get_or_fetch(key, PROXIES_REFRESH_INTERVAL, || async {
-            let manager = IpcManager::global();
-            manager.get_proxies().await.unwrap_or_else(|e| {
-                logging!(error, Type::Cmd, "Failed to fetch proxies: {e}");
-                serde_json::Value::Object(serde_json::Map::new())
-            })
-        })
-        .await;
-    Ok((*value).clone())
-}
-
-/// 强制刷新代理缓存用于profile切换
-#[tauri::command]
-pub async fn force_refresh_proxies() -> CmdResult<serde_json::Value> {
-    let cache = CacheProxy::global();
-    let key = CacheProxy::make_key("proxies", "default");
-    cache.map.remove(&key);
-    get_proxies().await
+pub async fn record_selected_node(group_name: String, node: String) -> CmdResult<()> {
+    crate::config::profiles::record_selected_node(&group_name, &node)
+        .await
+        .stringify_err()
 }
 
 #[tauri::command]
-pub async fn get_providers_proxies() -> CmdResult<serde_json::Value> {
-    let cache = CacheProxy::global();
-    let key = CacheProxy::make_key("providers", "default");
-    let value = cache
-        .get_or_fetch(key, PROVIDERS_REFRESH_INTERVAL, || async {
-            let manager = IpcManager::global();
-            manager.get_providers_proxies().await.unwrap_or_else(|e| {
-                logging!(error, Type::Cmd, "Failed to fetch provider proxies: {e}");
-                serde_json::Value::Object(serde_json::Map::new())
-            })
-        })
-        .await;
-    Ok((*value).clone())
+pub async fn forget_selected_node(group_name: String) -> CmdResult<()> {
+    crate::config::profiles::forget_selected_node(&group_name)
+        .await
+        .stringify_err()
 }
 
-/// 同步托盘和GUI的代理选择状态
+static TRAY_SYNC_RUNNING: AtomicBool = AtomicBool::new(false);
+static TRAY_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
+
+fn runtime_group_order(config: Option<&Mapping>) -> Vec<String> {
+    let mut seen = HashSet::new();
+
+    config
+        .and_then(|config| config.get("proxy-groups"))
+        .and_then(|groups| groups.as_sequence())
+        .into_iter()
+        .flatten()
+        .filter_map(|group| group.get("name"))
+        .filter_map(|name| name.as_str())
+        .filter(|name| !name.is_empty() && *name != "GLOBAL")
+        .filter(|name| seen.insert(*name))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[tauri::command]
+pub async fn get_proxy_view() -> CmdResult<ProxyViewV1> {
+    let runtime = Config::runtime().await;
+    let latest_runtime = runtime.latest_arc();
+    let runtime_group_order = runtime_group_order(latest_runtime.config.as_ref());
+
+    let mihomo = Handle::mihomo();
+    let (proxies, providers) = tokio::join!(mihomo.get_proxies(), mihomo.get_proxy_providers(),);
+    let proxies = proxies.stringify_err()?;
+
+    Ok(ProxyViewBuilder::build(ProxyViewInput {
+        runtime_group_order,
+        proxies,
+        providers: providers.ok(),
+    }))
+}
+
 #[tauri::command]
 pub async fn sync_tray_proxy_selection() -> CmdResult<()> {
-    use crate::core::tray::Tray;
+    if TRAY_SYNC_RUNNING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        AsyncHandler::spawn(move || async move {
+            run_tray_sync_loop().await;
+        });
+    } else {
+        TRAY_SYNC_PENDING.store(true, Ordering::Release);
+    }
 
-    match Tray::global().update_menu().await {
-        Ok(_) => {
-            logging!(info, Type::Cmd, "Tray proxy selection synced successfully");
-            Ok(())
+    Ok(())
+}
+
+async fn run_tray_sync_loop() {
+    loop {
+        match Tray::global().update_menu().await {
+            Ok(_) => {
+                logging!(debug, Type::Cmd, "Tray proxy selection synced successfully");
+            }
+            Err(e) => {
+                logging!(error, Type::Cmd, "Failed to sync tray proxy selection: {e:#}");
+            }
         }
-        Err(e) => {
-            logging!(error, Type::Cmd, "Failed to sync tray proxy selection: {e}");
-            Err(e.to_string())
+
+        if !TRAY_SYNC_PENDING.swap(false, Ordering::AcqRel) {
+            TRAY_SYNC_RUNNING.store(false, Ordering::Release);
+
+            if TRAY_SYNC_PENDING.swap(false, Ordering::AcqRel)
+                && TRAY_SYNC_RUNNING
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                continue;
+            }
+
+            break;
         }
     }
 }
 
-/// 更新代理选择并同步托盘和GUI状态
-#[tauri::command]
-pub async fn update_proxy_and_sync(group: String, proxy: String) -> CmdResult<()> {
-    match IpcManager::global().update_proxy(&group, &proxy).await {
-        Ok(_) => {
-            // println!("Proxy updated successfully: {} -> {}", group,proxy);
-            logging!(
-                info,
-                Type::Cmd,
-                "Proxy updated successfully: {} -> {}",
-                group,
-                proxy
-            );
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use serde_yaml_ng::Value;
 
-            let cache = CacheProxy::global();
-            let key = CacheProxy::make_key("proxies", "default");
-            cache.map.remove(&key);
+    use super::runtime_group_order;
 
-            if let Err(e) = Tray::global().update_menu().await {
-                logging!(error, Type::Cmd, "Failed to sync tray menu: {}", e);
-            }
+    #[test]
+    fn runtime_order_keeps_first_non_empty_non_global_name() {
+        let config: Value = serde_yaml_ng::from_str(
+            r#"
+proxy-groups:
+  - name: Beta
+  - name: ""
+  - name: GLOBAL
+  - name: " Alpha "
+  - name: Beta
+"#,
+        )
+        .expect("parse runtime");
 
-            if let Some(app_handle) = Handle::global().app_handle() {
-                let _ = app_handle.emit("verge://force-refresh-proxies", ());
-                let _ = app_handle.emit("verge://refresh-proxy-config", ());
-            }
-
-            logging!(
-                info,
-                Type::Cmd,
-                "Proxy and sync completed successfully: {} -> {}",
-                group,
-                proxy
-            );
-            Ok(())
-        }
-        Err(e) => {
-            println!("1111111111111111");
-            logging!(
-                error,
-                Type::Cmd,
-                "Failed to update proxy: {} -> {}, error: {}",
-                group,
-                proxy,
-                e
-            );
-            Err(e.to_string())
-        }
+        assert_eq!(
+            runtime_group_order(config.as_mapping()),
+            ["Beta".to_owned(), " Alpha ".to_owned()]
+        );
     }
 }
